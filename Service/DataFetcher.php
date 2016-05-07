@@ -111,4 +111,113 @@ class DataFetcher
 
         return $item->get();
     }
+
+    /**
+     * Get all statics metrics for the given url between 2 dates.
+     *
+     * @param string         $metric
+     * @param \DateTime|null $startTime
+     * @param \DateTime|null $endTime
+     * @param array          $optParams
+     *
+     * @return mixed
+     */
+    public function getStaticMetrics($metric, \DateTime $startTime = null, \DateTime $endTime = null, $optParams = [])
+    {
+        if (empty($this->viewId)) {
+            throw new \LogicException('You need to specify a profile id that we are going to fetch page views from');
+        }
+
+        if ($startTime === null) {
+            // one year ago
+            $startTime = new \DateTime('-1year');
+        }
+
+        if ($endTime === null) {
+            // today
+            $endTime = new \DateTime();
+        }
+
+        $start = $startTime->format('Y-m-d');
+        $end = $endTime->format('Y-m-d');
+
+        //create the cache key
+        $cacheKey = sha1($metric.$start);
+        $item = $this->cache->getItem($cacheKey);
+        if (!$item->isHit()) {
+            //check if we got a token
+            if (null === $this->client->getAccessToken()) {
+                return 0;
+            }
+
+            //fetch result
+            try {
+                $analytics = new \Google_Service_Analytics($this->client);
+                $results = $analytics->data_ga->get(
+                    'ga:'.$this->viewId,
+                    $start,
+                    $end,
+                    'ga:'.$metric,
+                    $optParams
+                );
+
+                $rows = $results->getRows();
+                $data = $rows[0][0];
+            } catch (\Google_Auth_Exception $e) {
+                $data = 0;
+            }
+
+            //save cache item
+            $item->set($data)
+                ->expiresAfter($this->cacheLifetime);
+            $this->cache->save($item);
+        }
+
+        return $item->get();
+    }
+
+    /**
+     * Get all realtime metrics for the given url between 2 dates.
+     *
+     * @param string         $metric
+     * @param bool           $total
+     * @param array          $optParams
+     * 
+     * @return mixed
+     */
+    public function getRealTimeMetrics($metric, $total = false, $optParams = [])
+    {
+        if (empty($this->viewId)) {
+            throw new \LogicException('You need to specify a profile id that we are going to fetch page views from');
+        }
+
+        //check if we got a token
+        if (null === $this->client->getAccessToken()) {
+            return 0;
+        }
+
+        //fetch result
+        try {
+            $analytics = new \Google_Service_Analytics($this->client);
+            $results = $analytics->data_realtime->get(
+                'ga:'.$this->viewId,
+                'rt:'.$metric,
+                $optParams
+            );
+
+            if($total == true) {
+                $data = 0;
+                $rows = $results->getTotalsForAllResults();
+                if (isset($rows['rt:' . $metric])) {
+                    $data = $rows['rt:' . $metric];
+                }
+            } else {
+                $data = $results->getRows();
+            }
+        } catch (\Google_Auth_Exception $e) {
+            $data = 0;
+        }
+
+        return $data;
+    }
 }
